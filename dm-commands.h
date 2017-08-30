@@ -264,6 +264,7 @@ typedef struct DMCmdControl DMCmdControl;
 /* DIAG_CMD_NV_READ / DIAG_CMD_NV_WRITE */
 struct DMCmdNVReadWrite {
     uint8_t code;
+    // uint16_t nv_item;
     uint16_t nv_item;
     uint8_t data[128];
     uint16_t status;

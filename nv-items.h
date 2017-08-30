@@ -39,6 +39,7 @@ enum {
     DIAG_NV_HYBRID_PREF  = 562,  /* Hybrid 1x + HDR preference */
     DIAG_NV_IPV6_ENABLED = 1896, /* Enable IPv6 */
     DIAG_NV_HDR_REV_PREF = 4964, /* HDR mode preference(?): rev0, revA, eHRPD */
+    DIAG_NV_LTE_BAND_AVAILABLE = 6828, /* LTE Band Preference */
 };
 
 
@@ -68,6 +69,13 @@ struct DMNVItemModePref {
     uint8_t mode_pref;
 } __attribute__ ((packed));
 typedef struct DMNVItemModePref DMNVItemModePref;
+
+/* DIAG_NV_LTE_BAND_AV */
+struct DMNVItemLteBandAv {
+    uint32_t set1;
+    uint8_t set2;
+} __attribute__ ((packed));
+typedef struct DMNVItemLteBandAv DMNVItemLteBandAv;
 
 /* DIAG_NV_DIR_NUMBER */
 struct DMNVItemMdn {

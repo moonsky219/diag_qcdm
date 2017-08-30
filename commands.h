@@ -288,6 +288,28 @@ QcdmResult *qcdm_cmd_nv_set_roam_pref_result (const char *buf,
 
 /**********************************************************************/
 
+/* LTE BC Config */
+
+#define QCDM_CMD_NV_GET_LTE_BAND_AVAILABLE_SET1   "set1"
+#define QCDM_CMD_NV_GET_LTE_BAND_AVAILABLE_SET2   "set2"
+
+size_t qcdm_cmd_nv_get_lte_band_available_new(
+        char *buf,
+        size_t len);
+
+QcdmResult *qcdm_cmd_nv_get_lte_band_available_result(
+        const char *buf,
+        size_t len,
+        int *out_error);
+
+size_t qcdm_cmd_nv_set_lte_band_available_new(
+        char *buf,
+        size_t len,
+        uint32_t set1,
+        uint8_t set2);
+
+/**********************************************************************/
+
 /* Values for QCDM_CMD_NV_GET_MODE_PREF_ITEM_MODE_PREF */
 enum {
     QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_DIGITAL         = 0x00,

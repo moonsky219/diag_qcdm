@@ -271,7 +271,7 @@ nv_status_to_qcdm_error (uint16_t status)
 }
 
 static qcdmbool
-check_nv_cmd (DMCmdNVReadWrite *cmd, uint16_t nv_item, int *out_error)
+check_nv_cmd (DMCmdNVReadWrite *cmd, uint32_t nv_item, int *out_error)
 {
     uint16_t cmd_item;
 
@@ -281,15 +281,18 @@ check_nv_cmd (DMCmdNVReadWrite *cmd, uint16_t nv_item, int *out_error)
     /* NV read/write have a status byte at the end */
     if (cmd->status != 0) {
         qcdm_err (0, "The NV operation failed (status 0x%X).", le16toh (cmd->status));
+        printf ("The NV operation failed (status 0x%X).\n", le16toh (cmd->status));
         if (out_error)
             *out_error = nv_status_to_qcdm_error (le16toh (cmd->status));
         return FALSE;
     }
 
-    cmd_item = le16toh (cmd->nv_item);
+    cmd_item = le32toh (cmd->nv_item);
     if (cmd_item != nv_item) {
         qcdm_err (0, "Unexpected DM NV command response (expected item %d, got "
                   "item %d)", nv_item, cmd_item);
+        printf("Unexpected DM NV command response (expected item %d, got "
+                  "item %d)\n", nv_item, cmd_item);
         if (out_error)
             *out_error = -QCDM_ERROR_RESPONSE_UNEXPECTED;
         return FALSE;
@@ -303,7 +306,8 @@ check_nv_cmd (DMCmdNVReadWrite *cmd, uint16_t nv_item, int *out_error)
 size_t
 qcdm_cmd_version_info_new (char *buf, size_t len)
 {
-    char cmdbuf[3];
+    // char cmdbuf[3];
+    char cmdbuf[16];
     DMCmdHeader *cmd = (DMCmdHeader *) &cmdbuf[0];
 
     qcdm_return_val_if_fail (buf != NULL, 0);
@@ -311,7 +315,6 @@ qcdm_cmd_version_info_new (char *buf, size_t len)
 
     memset (cmd, 0, sizeof (*cmd));
     cmd->code = DIAG_CMD_VERSION_INFO;
-    // cmd->code = DIAG_CMD_TIMESTAMP;
 
     return dm_encapsulate_buffer (cmdbuf, sizeof (*cmd), sizeof (cmdbuf), buf, len);
 }
@@ -922,9 +925,75 @@ qcdm_cmd_nv_set_roam_pref_result (const char *buf, size_t len, int *out_error)
 /**********************************************************************/
 
 size_t
-qcdm_cmd_nv_get_mode_pref_new (char *buf, size_t len, uint8_t profile)
+qcdm_cmd_nv_get_lte_band_available_new (char *buf, size_t len)
+{
+    char cmdbuf[sizeof (DMCmdNVReadWrite) + 2]; // 133 + 2 bytes
+    DMCmdNVReadWrite *cmd = (DMCmdNVReadWrite *) &cmdbuf[0];
+
+    qcdm_return_val_if_fail (buf != NULL, 0);
+    qcdm_return_val_if_fail (len >= sizeof (*cmd) + DIAG_TRAILER_LEN, 0);
+
+    memset (cmd, 0, sizeof (*cmd));
+    cmd->code = DIAG_CMD_NV_READ;
+    cmd->nv_item = htole16 (DIAG_NV_LTE_BAND_AVAILABLE);
+
+    return dm_encapsulate_buffer (cmdbuf, sizeof (*cmd), sizeof (cmdbuf), buf, len);
+}
+
+QcdmResult *
+qcdm_cmd_nv_get_lte_band_available_result (const char *buf, size_t len, int *out_error)
+{
+    QcdmResult *result = NULL;
+    DMCmdNVReadWrite *rsp = (DMCmdNVReadWrite *) buf;
+    DMNVItemLteBandAv *band;
+
+    qcdm_return_val_if_fail (buf != NULL, NULL);
+
+    if (!check_command (buf, len, DIAG_CMD_NV_READ, sizeof (DMCmdNVReadWrite), out_error)) {
+        printf("check_command failed.\n");
+        return NULL;
+    }
+
+    if (!check_nv_cmd (rsp, DIAG_NV_LTE_BAND_AVAILABLE, out_error)) {
+        printf("check_nv_cmd failed.\n");
+        return NULL;
+    }
+
+    band = (DMNVItemLteBandAv *) &rsp->data[0];
+
+    result = qcdm_result_new ();
+    qcdm_result_add_u32 (result, QCDM_CMD_NV_GET_LTE_BAND_AVAILABLE_SET1, band->set1);
+    qcdm_result_add_u8 (result, QCDM_CMD_NV_GET_LTE_BAND_AVAILABLE_SET2, band->set2);
+
+    return result;
+}
+
+size_t
+qcdm_cmd_nv_set_lte_band_available_new (char *buf, size_t len, uint32_t set1, uint8_t set2)
 {
     char cmdbuf[sizeof (DMCmdNVReadWrite) + 2];
+    DMCmdNVReadWrite *cmd = (DMCmdNVReadWrite *) &cmdbuf[0];
+    DMNVItemLteBandAv *req;
+
+    qcdm_return_val_if_fail (buf != NULL, 0);
+    qcdm_return_val_if_fail (len >= sizeof (*cmd) + DIAG_TRAILER_LEN, 0);
+
+    memset (cmd, 0, sizeof (*cmd));
+    cmd->code = DIAG_CMD_NV_WRITE;
+    cmd->nv_item = htole16 (DIAG_NV_LTE_BAND_AVAILABLE);
+
+    req = (DMNVItemLteBandAv *) &cmd->data[0];
+    req->set1 = set1;
+    req->set2 = set2;
+
+    return dm_encapsulate_buffer (cmdbuf, sizeof (*cmd), sizeof (cmdbuf), buf, len);
+}
+
+
+size_t
+qcdm_cmd_nv_get_mode_pref_new (char *buf, size_t len, uint8_t profile)
+{
+    char cmdbuf[sizeof (DMCmdNVReadWrite) + 2]; // 133 + 2 bytes
     DMCmdNVReadWrite *cmd = (DMCmdNVReadWrite *) &cmdbuf[0];
     DMNVItemModePref *req;
 
@@ -933,8 +1002,7 @@ qcdm_cmd_nv_get_mode_pref_new (char *buf, size_t len, uint8_t profile)
 
     memset (cmd, 0, sizeof (*cmd));
     cmd->code = DIAG_CMD_NV_READ;
-    // cmd->nv_item = htole16 (DIAG_NV_MODE_PREF);
-    cmd->nv_item = htole16 (2);
+    cmd->nv_item = htole32 (DIAG_NV_MODE_PREF);
 
     req = (DMNVItemModePref *) &cmd->data[0];
     req->profile = profile;
@@ -951,11 +1019,15 @@ qcdm_cmd_nv_get_mode_pref_result (const char *buf, size_t len, int *out_error)
 
     qcdm_return_val_if_fail (buf != NULL, NULL);
 
-    if (!check_command (buf, len, DIAG_CMD_NV_READ, sizeof (DMCmdNVReadWrite), out_error))
+    if (!check_command (buf, len, DIAG_CMD_NV_READ, sizeof (DMCmdNVReadWrite), out_error)) {
+        printf("check_command failed.\n");
         return NULL;
+    }
 
-    if (!check_nv_cmd (rsp, DIAG_NV_MODE_PREF, out_error))
+    if (!check_nv_cmd (rsp, DIAG_NV_MODE_PREF, out_error)) {
+        printf("check_nv_cmd failed.\n");
         return NULL;
+    }
 
     mode = (DMNVItemModePref *) &rsp->data[0];
 

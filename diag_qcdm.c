@@ -33,10 +33,6 @@
 #define  LOGD(...)  __android_log_print(ANDROID_LOG_DEBUG,LOG_TAG,__VA_ARGS__)
 #define  LOGI(...)  __android_log_print(ANDROID_LOG_INFO,LOG_TAG,__VA_ARGS__)
 
-// NOTE: the following number should be updated every time.
-#define DIAG_REVEALER_VERSION "2.0"
-
-#define LOG_CUT_SIZE_DEFAULT (1 * 1024 * 1024)
 // #define BUFFER_SIZE	8192
 #define BUFFER_SIZE	32768
 
@@ -91,7 +87,7 @@ enum remote_procs {
 #define CALLBACK_MODE		6
 #define TTY_MODE			8
 
-/* 
+/*
  * NEXUS-6-ONLY IOCTL
  * Reference: https://github.com/MotorolaMobilityLLC/kernel-msm/blob/kitkat-4.4.4-release-victara/include/linux/diagchar.h
  */
@@ -99,7 +95,7 @@ enum remote_procs {
 #define DIAG_IOCTL_OPTIMIZED_LOGGING_FLUSH	36
 
 
-/* 
+/*
  * Buffering mode
  * Reference: https://android.googlesource.com/kernel/msm.git/+/android-6.0.0_r0.9/include/linux/diagchar.h
  */
@@ -118,7 +114,7 @@ enum remote_procs {
 #define DIAG_FIFO_PIPE_SIZE 128*1024*1024 // 128MB
 
 
-/* 
+/*
  * Structures for DCI client registration
  * Reference: https://android.googlesource.com/kernel/msm.git/+/android-6.0.0_r0.9/drivers/char/diag/diag_dci.h
  */
@@ -132,7 +128,7 @@ struct diag_dci_reg_tbl_t {
 } __packed;
 
 
-/* 
+/*
  * Android 7.0: switch_logging_mode structure
  * Reference: https://android.googlesource.com/kernel/msm.git/+/android-7.1.0_r0.3/drivers/char/diag/diagchar.h
  */
@@ -151,7 +147,7 @@ struct diag_logging_mode_param_t {
 				| DIAG_CON_LPASS | DIAG_CON_WCNSS \
 				| DIAG_CON_SENSORS)
 
-/* 
+/*
  * Structures for ioctl
  * Reference: https://android.googlesource.com/kernel/msm.git/+/android-6.0.0_r0.9/drivers/char/diag/diagchar_core.c
  */
@@ -246,59 +242,7 @@ void sigpipe_handler(int signo)
   }
 }
 
-
-static double
-get_posix_timestamp () {
-    struct timeval tv;
-    (void) gettimeofday(&tv, NULL);
-    return (double)(tv.tv_sec) + (double)(tv.tv_usec) / 1.0e6;
-}
-
-// Read the content of config file.
-// If failed, an empty buffer is returned.
-static BinaryBuffer
-read_diag_cfg (const char *filename)
-{
-	BinaryBuffer ret;
-
-	FILE *fp = fopen(filename, "rb");
-	if (fp == NULL) {
-		perror("Error");
-		goto fail;
-	}
-	fseek(fp, 0L, SEEK_END);
-	size_t file_sz = ftell(fp);
-	fseek(fp, 0L, SEEK_SET);
-
-	if (file_sz > 0 && file_sz <= BUFFER_SIZE) {
-		ret.p = (char *) malloc(file_sz);
-		if (ret.p == NULL) {
-			fprintf(stderr, "Error: Failed to malloc.\n");
-			goto fail;
-		}
-		ret.len = file_sz;
-		int retcode = fread(ret.p, sizeof(char), ret.len, fp);
-		if (retcode != ret.len) {
-			perror("Error");
-			free(ret.p);
-			goto fail;
-		}
-	} else {
-		fprintf(stderr, "Error: File size inappropriate.\n");
-		goto fail;
-	}
-
-	return ret;
-
-	fail:
-		ret.p = NULL;
-		ret.len = 0;
-		return ret;
-}
-
-static void
-print_hex (const char *buf, int len)
-{
+static void print_hex (const char *buf, int len) {
 	int i = 0;
 	for (i = 0; i < len; i++) {
 		printf("%02x ", buf[i]);
@@ -311,9 +255,8 @@ print_hex (const char *buf, int len)
 
 
 // Write commands to /dev/diag device.
-static int
-write_commands (int fd, BinaryBuffer *pbuf_write)
-{
+static int write_commands (int fd, BinaryBuffer *pbuf_write, uint32_t data_type) {
+    // data_type: indicate whether CALLBACK_DATA_TYPE or USER_SPACE_DATA_TYPE
 	size_t i = 0;
 	char *p = pbuf_write->p;
 
@@ -331,7 +274,7 @@ write_commands (int fd, BinaryBuffer *pbuf_write)
     // Metadata for each mask command
 	size_t offset = remote_dev ? 8 : 4; //offset of the metadata (4 bytes for MSM, 8 bytes for MDM)
 	printf("write_commands: offset=%d remote_dev=%d\n",offset,remote_dev);
-	*((int *)send_buf) = htole32(USER_SPACE_DATA_TYPE);
+	*((int *)send_buf) = htole32(data_type);
 	if(remote_dev){
 		/*
 	 	 * MDM device: should let diag driver know it
@@ -355,9 +298,7 @@ write_commands (int fd, BinaryBuffer *pbuf_write)
 			// fflush(stdout);
 			// int ret = write(fd, (const void *) send_buf, len + 4);
             errno = 0;
-            // Haotian: Not sure if we need to append USER_SPACE_DATA_TYPE
             int ret = write(fd, (const void *) send_buf, len + offset);
-            // int ret = write(fd, (const void *)send_buf + offset, len);
 			printf("write_commands: ret = %d\n",ret);
 			if (ret < 0) {
 				printf("write_commands error (len=%d, offset=%d, errno=%d): %s\n", len, offset, errno, strerror(errno));
@@ -509,46 +450,17 @@ manager_append_log (struct LogManagerState *pstate, int fifo_fd, size_t msg_len)
 	return 0;
 }
 
-int send_command (ComData *d, char *buf, unsigned long len) {
-    int status;
-    int eagain_count = 1000;
-    unsigned long i = 0;
-
-    while (i < len) {
-        errno = 0;
-        printf("send_command: ready to write (totally %lu) ...\n", len);
-        status = write (d->fd, &buf[i], 1);
-        printf("send_command: write once, status=%d.\n", status);
-        if (status < 0) {
-            if (errno == EAGAIN) {
-                printf("send_command: Resource temporarily unavailable, timer=%d.\n", eagain_count);
-                eagain_count--;
-                if (eagain_count <= 0)
-                    return 0;
-            } else {
-                printf("send_command: write failed: (%d) %s\n", errno, strerror(errno));
-                return -1;
-            }
-        } else
-            i++;
-
-        printf("send_command: finished %lu in %lu.\n", i, len);
-        usleep (1000);
-    }
-
-    return 1;
-}
-
 unsigned long wait_reply (ComData *d, char *buf, unsigned long len) {
     int result;
     ssize_t bytes_read;
-    unsigned long decap_len = 0;
+    size_t decap_len = 0;
 
     errno = 0;
     // bytes_read = read (d->fd, &buf_read[total], 1);
+    printf("wait_reply: call read...\n");
     bytes_read = read (d->fd, &buf_read, sizeof(buf_read));
-    printf("wait_reply: bytes_read=%ld\n", bytes_read);
-    if (bytes_read < 128) {
+    printf("wait_reply: bytes_read = %zd\n", bytes_read);
+    if (bytes_read < 256) {
         print_hex(buf_read, bytes_read);
     }
     if (bytes_read > 0) {
@@ -561,10 +473,11 @@ unsigned long wait_reply (ComData *d, char *buf, unsigned long len) {
 
             qcdmbool more = FALSE;
             qcdmbool success;
-            unsigned long used = 0;
+            size_t used = 0;
 
             decap_len = 0;
-            success = dm_decapsulate_buffer (buf_read + 12, num_data, buf, len, &decap_len, &used, &more);
+            success = dm_decapsulate_buffer(buf_read + 12,
+                    num_data, buf, len, &decap_len, &used, &more);
 
             if (success && !more) {
                 /* Success; we have a packet */
@@ -608,41 +521,44 @@ void com_version_info (ComData *data) {
     buff.p = buf;
     buff.len = len;
     printf("write to fd:%d\n", fd);
-    write_commands(fd, &buff);
+    write_commands(fd, &buff, USER_SPACE_DATA_TYPE);
     printf("com_version_info: send_command successfully.\n");
 
-    /* Get a response */
-    reply_len = wait_reply (d, buf, sizeof (buf));
+    while (1+1 == 2) {
+        /* Get a response */
+        printf("Try to get a response:\n");
+        reply_len = wait_reply (d, buf, sizeof (buf));
 
-    printf("com_version_info reply_len: %lu\n", reply_len);
-    /* Parse the response into a result structure */
-    result = qcdm_cmd_version_info_result (buf, reply_len, NULL);
-    assert (result);
+        printf("com_version_info reply_len: %lu\n", reply_len);
+        /* Parse the response into a result structure */
+        result = qcdm_cmd_version_info_result (buf, reply_len, NULL);
+        assert (result);
 
-    str = NULL;
-    qcdm_result_get_string (result, QCDM_CMD_VERSION_INFO_ITEM_COMP_DATE, &str);
-    printf("%s: Compiled Date: %s\n", __func__, str);
+        str = NULL;
+        qcdm_result_get_string (result, QCDM_CMD_VERSION_INFO_ITEM_COMP_DATE, &str);
+        printf("%s: Compiled Date: %s\n", __func__, str);
 
-    str = NULL;
-    qcdm_result_get_string (result, QCDM_CMD_VERSION_INFO_ITEM_COMP_TIME, &str);
-    printf ("%s: Compiled Time: %s\n", __func__, str);
+        str = NULL;
+        qcdm_result_get_string (result, QCDM_CMD_VERSION_INFO_ITEM_COMP_TIME, &str);
+        printf ("%s: Compiled Time: %s\n", __func__, str);
 
-    str = NULL;
-    qcdm_result_get_string (result, QCDM_CMD_VERSION_INFO_ITEM_RELEASE_DATE, &str);
-    printf ("%s: Release Date: %s\n", __func__, str);
+        str = NULL;
+        qcdm_result_get_string (result, QCDM_CMD_VERSION_INFO_ITEM_RELEASE_DATE, &str);
+        printf ("%s: Release Date: %s\n", __func__, str);
 
-    str = NULL;
-    qcdm_result_get_string (result, QCDM_CMD_VERSION_INFO_ITEM_RELEASE_TIME, &str);
-    printf ("%s: Release Time: %s\n", __func__, str);
+        str = NULL;
+        qcdm_result_get_string (result, QCDM_CMD_VERSION_INFO_ITEM_RELEASE_TIME, &str);
+        printf ("%s: Release Time: %s\n", __func__, str);
 
-    str = NULL;
-    qcdm_result_get_string (result, QCDM_CMD_VERSION_INFO_ITEM_MODEL, &str);
-    printf ("%s: Model: %s\n", __func__, str);
+        str = NULL;
+        qcdm_result_get_string (result, QCDM_CMD_VERSION_INFO_ITEM_MODEL, &str);
+        printf ("%s: Model: %s\n", __func__, str);
 
-    qcdm_result_unref (result);
+        qcdm_result_unref (result);
+    }
 }
 
-void com_nv_task(ComData *data) {
+void com_nv_cellular_mode(ComData *data) {
     /* do nv related task */
     ComData *d = data;
     int err = QCDM_SUCCESS;
@@ -663,79 +579,217 @@ void com_nv_task(ComData *data) {
     buff.p = buf;
     buff.len = len;
     printf("write to fd:%d\n", fd);
-    write_commands(d->fd, &buff);
+    write_commands(d->fd, &buff, CALLBACK_DATA_TYPE);
     printf("com_nv_task: send_command done.\n");
 
-    /* Get a response */
-    reply_len = wait_reply (d, buf, sizeof (buf));
+    while (1+1 == 2) {
+        usleep(1000000);
+        printf("Try to get response.\n");
+        /* Get a response */
+        reply_len = wait_reply (d, buf, sizeof (buf));
 
-    /* Parse the response into a result structure */
-    result = qcdm_cmd_nv_get_mode_pref_result (buf, reply_len, &err);
-    if (!result) {
-        if (   err == -QCDM_ERROR_NVCMD_FAILED
-            || err == -QCDM_ERROR_RESPONSE_BAD_PARAMETER
-            || err == -QCDM_ERROR_NV_ERROR_INACTIVE
-            || err == -QCDM_ERROR_NV_ERROR_BAD_PARAMETER)
-            return;
-        if(err != QCDM_SUCCESS) {
-            printf("qcdm_cmd_nv_get_mode_pref_result failed.\n");
+        /* Parse the response into a result structure */
+        result = qcdm_cmd_nv_get_mode_pref_result (buf, reply_len, &err);
+        if (!result) {
+            if (   err == -QCDM_ERROR_NVCMD_FAILED
+                || err == -QCDM_ERROR_RESPONSE_BAD_PARAMETER
+                || err == -QCDM_ERROR_NV_ERROR_INACTIVE
+                || err == -QCDM_ERROR_NV_ERROR_BAD_PARAMETER)
+                return;
+            if(err != QCDM_SUCCESS) {
+                printf("qcdm_cmd_nv_get_mode_pref_result failed.\n");
+            }
         }
-    }
 
-    err = qcdm_result_get_u8 (result, QCDM_CMD_NV_GET_MODE_PREF_ITEM_MODE_PREF, &pref);
-    // g_assert_cmpint (err, ==, QCDM_SUCCESS);
-    if(err != QCDM_SUCCESS) {
-        printf("qcdm_result_get_u8 failed.\n");
-    }
+        err = qcdm_result_get_u8 (result, QCDM_CMD_NV_GET_MODE_PREF_ITEM_MODE_PREF, &pref);
+        // g_assert_cmpint (err, ==, QCDM_SUCCESS);
+        if(err != QCDM_SUCCESS) {
+            printf("qcdm_result_get_u8 failed.\n");
+        }
 
-    switch (pref) {
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_DIGITAL:
-        msg = "digital";
-        break;
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_DIGITAL_ONLY:
-        msg = "digital only";
-        break;
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_AUTO:
-        msg = "automatic";
-        break;
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_1X_ONLY:
-        msg = "CDMA 1x only";
-        break;
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_HDR_ONLY:
-        msg = "HDR only";
-        break;
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_GPRS_ONLY:
-        msg = "GPRS only";
-        break;
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_UMTS_ONLY:
-        msg = "UMTS only";
-        break;
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_GSM_UMTS_ONLY:
-        msg = "GSM and UMTS only";
-        break;
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_1X_HDR_ONLY:
-        msg = "CDMA 1x and HDR only";
-        break;
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_LTE_ONLY:
-        msg = "LTE only";
-        break;
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_GSM_UMTS_LTE_ONLY:
-        msg = "GSM/UMTS/LTE only";
-        break;
-    case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_1X_HDR_LTE_ONLY:
-        msg = "CDMA 1x, HDR, and LTE only";
-        break;
-    default:
-        msg = "unknown";
-        break;
-    }
-    printf("%s: Mode preference: 0x%02X (%s)\n", __func__, pref, msg);
+        switch (pref) {
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_DIGITAL:
+            msg = "digital";
+            break;
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_DIGITAL_ONLY:
+            msg = "digital only";
+            break;
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_AUTO:
+            msg = "automatic";
+            break;
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_1X_ONLY:
+            msg = "CDMA 1x only";
+            break;
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_HDR_ONLY:
+            msg = "HDR only";
+            break;
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_GPRS_ONLY:
+            msg = "GPRS only";
+            break;
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_UMTS_ONLY:
+            msg = "UMTS only";
+            break;
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_GSM_UMTS_ONLY:
+            msg = "GSM and UMTS only";
+            break;
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_1X_HDR_ONLY:
+            msg = "CDMA 1x and HDR only";
+            break;
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_LTE_ONLY:
+            msg = "LTE only";
+            break;
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_GSM_UMTS_LTE_ONLY:
+            msg = "GSM/UMTS/LTE only";
+            break;
+        case QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_1X_HDR_LTE_ONLY:
+            msg = "CDMA 1x, HDR, and LTE only";
+            break;
+        default:
+            msg = "unknown";
+            break;
+        }
+        printf("%s: Mode preference: 0x%02X (%s)\n", __func__, pref, msg);
 
-    qcdm_result_unref (result);
+        qcdm_result_unref (result);
+    }
 }
 
-int
-main (int argc, char **argv) {
+void com_nv_read_lte_band(ComData *data) {
+    /* do nv related task */
+    ComData *d = data;
+    int err = QCDM_SUCCESS;
+    char buf[512];
+    uint32_t set1;
+    uint8_t set2;
+    const char *msg;
+    int len;
+    QcdmResult *result;
+    unsigned long reply_len;
+
+    // len = qcdm_cmd_nv_get_mode_pref_new (buf, sizeof (buf), 0);
+    len = qcdm_cmd_nv_get_lte_band_available_new (buf, sizeof (buf));
+    assert (len > 0);
+
+    /* Send the command */
+    printf("com_nv_lte_band: sending command...\n");
+    print_hex(buf, len);
+    BinaryBuffer buff;
+    buff.p = buf;
+    buff.len = len;
+    printf("write to fd:%d\n", fd);
+    write_commands(d->fd, &buff, CALLBACK_DATA_TYPE);
+    printf("com_nv_lte_band: send_command done.\n");
+
+    while (1+1 == 2) {
+        usleep(1000000);
+        printf("Try to get response.\n");
+        /* Get a response */
+        reply_len = wait_reply (d, buf, sizeof (buf));
+
+        /* Parse the response into a result structure */
+        result = qcdm_cmd_nv_get_lte_band_available_result (buf, reply_len, &err);
+        if (!result) {
+            if (err == -QCDM_ERROR_NVCMD_FAILED) {
+                printf("QCDM_ERROR_NVCMD_FAILED\n");
+                return;
+            }
+            if (err == -QCDM_ERROR_RESPONSE_BAD_PARAMETER) {
+                printf("QCDM_ERROR_RESPONSE_BAD_PARAMETER\n");
+                return;
+            }
+            if (err == -QCDM_ERROR_NV_ERROR_INACTIVE) {
+                printf("QCDM_ERROR_NV_ERROR_INACTIVE: NV location is not active\n");
+                return;
+            }
+            if (err == -QCDM_ERROR_NV_ERROR_BAD_PARAMETER) {
+                printf("QCDM_ERROR_NV_ERROR_BAD_PARAMETER\n");
+                return;
+            }
+            if(err != QCDM_SUCCESS) {
+                printf("qcdm_cmd_nv_get_mode_pref_result failed.\n");
+            }
+        }
+
+        err = qcdm_result_get_u32 (result, QCDM_CMD_NV_GET_LTE_BAND_AVAILABLE_SET1, &set1);
+        // g_assert_cmpint (err, ==, QCDM_SUCCESS);
+        if(err != QCDM_SUCCESS) {
+            printf("qcdm_result_get_u32 failed.\n");
+        }
+        print_hex((char*)&set1, sizeof(set1));
+
+        qcdm_result_unref (result);
+    }
+}
+
+void com_nv_write_lte_band(ComData *data) {
+    ComData *d = data;
+    int err = QCDM_SUCCESS;
+    char buf[512];
+    uint32_t set1;
+    uint8_t set2;
+    const char *msg;
+    int len;
+    QcdmResult *result;
+    unsigned long reply_len;
+
+    // len = qcdm_cmd_nv_get_mode_pref_new (buf, sizeof (buf), 0);
+    len = qcdm_cmd_nv_set_lte_band_available_new (buf, sizeof (buf), 65759, 0);
+    assert (len > 0);
+
+    /* Send the command */
+    printf("com_nv_lte_band: sending command...\n");
+    print_hex(buf, len);
+    BinaryBuffer buff;
+    buff.p = buf;
+    buff.len = len;
+    printf("write to fd:%d\n", fd);
+    write_commands(d->fd, &buff, CALLBACK_DATA_TYPE);
+    printf("com_nv_lte_band: send_command done.\n");
+
+    while (1+1 == 2) {
+        usleep(1000000);
+        printf("Try to get response.\n");
+        /* Get a response */
+        reply_len = wait_reply (d, buf, sizeof (buf));
+
+        /* Parse the response into a result structure */
+        result = qcdm_cmd_nv_get_lte_band_available_result (buf, reply_len, &err);
+        if (!result) {
+            if (err == -QCDM_ERROR_NVCMD_FAILED) {
+                printf("QCDM_ERROR_NVCMD_FAILED\n");
+                return;
+            }
+            if (err == -QCDM_ERROR_RESPONSE_BAD_PARAMETER) {
+                printf("QCDM_ERROR_RESPONSE_BAD_PARAMETER\n");
+                return;
+            }
+            if (err == -QCDM_ERROR_NV_ERROR_INACTIVE) {
+                printf("QCDM_ERROR_NV_ERROR_INACTIVE: NV location is not active\n");
+                return;
+            }
+            if (err == -QCDM_ERROR_NV_ERROR_BAD_PARAMETER) {
+                printf("QCDM_ERROR_NV_ERROR_BAD_PARAMETER\n");
+                return;
+            }
+            if(err != QCDM_SUCCESS) {
+                printf("qcdm_cmd_nv_get_mode_pref_result failed.\n");
+            }
+        }
+
+        err = qcdm_result_get_u32 (result, QCDM_CMD_NV_GET_LTE_BAND_AVAILABLE_SET1, &set1);
+        // g_assert_cmpint (err, ==, QCDM_SUCCESS);
+        if(err != QCDM_SUCCESS) {
+            printf("qcdm_result_get_u32 failed.\n");
+        }
+        print_hex((char*)&set1, sizeof(set1));
+
+        qcdm_result_unref (result);
+        break;
+    }
+}
+
+
+int main (int argc, char **argv) {
 
 	if (signal(SIGPIPE, sigpipe_handler) == SIG_ERR) {
 		LOGW("WARNING: diag_revealer cannot capture SIGPIPE\n");
@@ -851,171 +905,11 @@ main (int argc, char **argv) {
     ComData *data = malloc(sizeof(ComData));
     data->fd = fd;
     // com_version_info(data);
-
-    com_nv_task(data);
+    com_nv_cellular_mode(data);
+    // com_nv_write_lte_band(data);
+    // com_nv_read_lte_band(data);
 
     free(data);
     close(fd);
     return 0;
-
-	// // Write commands to /dev/diag device to enable log collecting.
-	// // LOGD("Before write_commands\n");
-	// ret = write_commands(fd, &buf_write);
-	// fflush(stdout);
-	// free(buf_write.p);
-	// if (ret != 0) {
-	// 	return -8004;
-	// }
-
-	// // Messages are output to this FIFO pipe
-	// // int fifo_fd = open(argv[2], O_WRONLY | O_NONBLOCK);	// block until the other end also calls open()
-	// int fifo_fd = open(argv[2], O_WRONLY);	// block until the other end also calls open()
-	// if (fifo_fd < 0) {
-	// 	perror("open fifo");
-	// 	return -8005;
-	// } else {
-	// 	// LOGD("FIFO opened\n");
-	// }
-	// int pipesize = DIAG_FIFO_PIPE_SIZE;	//128MB
-	// fcntl(fifo_fd, F_SETPIPE_SZ, pipesize);
-
-	// int res = fcntl(fifo_fd, F_GETPIPE_SZ,pipesize);
-	// // LOGI("F_GETPIPE_SZ: res=%d pipesize=%d\n",res,pipesize);
-
-	// struct LogManagerState state;
-	// // Initialize state
-	// manager_init_state(&state, NULL, 0);
-
-	// if (argc >= 4) {
-	// 	size_t log_cut_size = 0;
-	// 	if (argc == 5) {
-	// 		double size_MB = atof(argv[4]);
-	// 		if (size_MB <= 0.0) {
-	// 			size_MB = 1.0;
-	// 			fprintf(stderr, "log_cut_size inappropriate, reset to %.2f\n", size_MB);
-	// 		}
-	// 		log_cut_size = (size_t) (size_MB * 1024 * 1024);
-	// 	} else {
-	// 		log_cut_size = LOG_CUT_SIZE_DEFAULT;
-	// 	}
-	// 	manager_init_state(&state, argv[3], log_cut_size);
-
-	// 	printf("log_cut_size = %lld\n", (long long int) log_cut_size);
-
-	// 	int ret2 = manager_start_new_log(&state, fifo_fd);
-	// 	if (ret2 < 0 || state.log_fp == NULL) {
-	// 		perror("open diag log");
-	// 		return -8006;
-	// 	}
-	// }
-
-	// while (1) {
-	// 	// LOGI("Reading logs...\n");
-	// 	int read_len = read(fd, buf_read, sizeof(buf_read));
-	// 	// LOGI("Received logs. read_len=%d\n", read_len);
-	// 	if (read_len > 0) {
-	// 		if (*((int *)buf_read) == USER_SPACE_DATA_TYPE) {
-	// 			int num_data = *((int *)(buf_read + 4));
-	// 			// LOGI("num_data=%d\n",num_data);
-	// 			int i = 0;
-	// 			// long long offset = 8;
-	// 			long long offset = remote_dev ? 12 : 8;
-	// 			for (i = 0; i < num_data; i++) {
-	// 				int ret_err;
-	// 				short fifo_msg_type = FIFO_MSG_TYPE_LOG;
-	// 				short fifo_msg_len;
-	// 				double ts = get_posix_timestamp();
-	// 				
-	// 				//Copy msg_len
-	// 				int msg_len = 0;
-	// 				memcpy(&msg_len, buf_read + offset, sizeof(int));
-	// 				// memcpy(&msg_len, buf_read + offset + 4, sizeof(int));
-	// 				// LOGI("memcpy: msg_len=%d\n",msg_len);
-	// 				if (msg_len < 0)
-	// 					continue;
-	// 				// print_hex(buf_read + offset + 4, msg_len);
-	// 				// Wirte msg type to pipe
-	// 				
-	// 				// LOGD("ret_err0");
-	// 				ret_err = write(fifo_fd, &fifo_msg_type, sizeof(short));
-
-	// 				// Write size of (payload + timestamp)
-	// 				fifo_msg_len = (short) msg_len + 8;
-	// 				ret_err = write(fifo_fd, &fifo_msg_len, sizeof(short));
-	// 				if(ret_err<0){
-	// 					// LOGI("Pipe closed, diag_revealer will exit");
-	// 					LOGI("Pipe error (msg_len): %s", strerror(errno));
-	// 					close(fd);
-	// 					return -1;
-	// 				}
-
-	// 				// Write timestamp of sending payload to pipe
-	// 				ret_err = write(fifo_fd, &ts, sizeof(double));
-	// 				if(ret_err<0){
-	// 					// LOGI("Pipe closed, diag_revealer will exit");
-	// 					LOGI("Pipe error (timestamp): %s", strerror(errno));
-	// 					close(fd);
-	// 					return -1;
-	// 				}
-
-	// 				// Write payload to pipe
-	// 				ret_err = write(fifo_fd, buf_read + offset + 4, msg_len);
-	// 				if(ret_err<0){
-	// 					LOGI("Pipe error (payload): %s", strerror(errno));
-	// 					LOGD("Debug: msg_len=%d buf_read+offset+4=%s\n", msg_len, buf_read + offset + 4);
-	// 					// LOGI("Pipe closed, diag_revealer will exit");
-	// 					close(fd);
-	// 					return -1;
-	// 				}
-
-	// 				// Write mi2log output if necessary
-	// 				if (state.log_fp != NULL) {
-	// 					int ret2 = manager_append_log(&state, fifo_fd, msg_len);
-	// 					if (ret2 == 0) {
-	// 						size_t log_res = fwrite(buf_read + offset + 4, sizeof(char), msg_len, state.log_fp);
-	// 						if(log_res!=msg_len){
-	// 							LOGI("Fail to save logs. diag_revealer will exit");
-	// 							close(fd);
-	// 							return -1;
-	// 						}
-	// 						fflush(state.log_fp);
-	// 					} else {
-	// 						// TODO: error handling
-	// 						LOGI("Fail to append logs. diag_revealer will exit");
-	// 						close(fd);
-	// 						return -1;
-	// 					}
-	// 				}
-	// 				offset += msg_len + 4;
-	// 			}
-	// 		}
-	// 		else
-	// 		{
-	// 			// TODO: Check other raw binary types
-	// 			LOGI("Not USER_SPACE_DATA_TYPE: %d\n", *((int *)buf_read));
-	// 		}
-	// 	} else {
-	// 		continue;
-	// 	}
-	// }
-
-	// close(fd);
-
-	// /*
-    //  * Deregister the DCI client
-    //  */
-
-    // /*
-    // ret = ioctl(fd, DIAG_IOCTL_DCI_DEINIT, (char *) &client_id);
-    // if (ret < 0) {
-	// 	LOGD("ioctl DIAG_IOCTL_DCI_DEINIT fails, with ret val = %d\n", ret);
-	// 	perror("ioctl DIAG_IOCTL_DCI_DEINIT");
-	// }
-	// else
-	// {
-	// 	printf("ioctl DIAG_IOCTL_DCI_DEINIT: ret=%d\n", ret);
-	// }
-	// */
-
-	// return (ret < 0? ret: 0);
 }
