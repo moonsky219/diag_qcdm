@@ -989,6 +989,99 @@ qcdm_cmd_nv_set_lte_band_available_new (char *buf, size_t len, uint32_t set1, ui
     return dm_encapsulate_buffer (cmdbuf, sizeof (*cmd), sizeof (cmdbuf), buf, len);
 }
 
+/**********************************************************************/
+
+/* LTE Band Pref */
+
+size_t
+qcdm_cmd_nv_get_lte_band_pref_new (char *buf, size_t len)
+{
+    /*
+     * \x4b\x13\x27\x00
+     * \x08\x00\x00\x00
+     * \x28\x00\x00\x00
+     * 0xb917
+     * Path to NV item
+     * CRC
+     */
+    char path[] = "/nv/item_files/modem/mmode/lte_bandpref";
+    unsigned long lenCmd = 4 + 4 + 4 + 2 + sizeof(path);
+    char cmdbuf[lenCmd + DIAG_TRAILER_LEN];
+
+    qcdm_return_val_if_fail (buf != NULL, 0);
+    qcdm_return_val_if_fail (len >= sizeof (cmdbuf), 0);
+
+    memset (cmdbuf, 0, sizeof (cmdbuf));
+    strncpy(cmdbuf, "\x4b\x13\x27\x00", 4);
+    strncpy(cmdbuf + 4, "\x08\x00\x00\x00", 4);
+    strncpy(cmdbuf + 8, "\x28\x00\x00\x00", 4);
+    strncpy(cmdbuf + 12, "\xb9\x17", 2);
+    strncpy(cmdbuf + 14, path, sizeof(path));
+
+    return dm_encapsulate_buffer(cmdbuf, lenCmd, sizeof (cmdbuf), buf, len);
+}
+
+// QcdmResult *
+// qcdm_cmd_nv_get_lte_band_pref_result (const char *buf, size_t len, int *out_error)
+// {
+//     QcdmResult *result = NULL;
+//     DMCmdNVReadWrite *rsp = (DMCmdNVReadWrite *) buf;
+//     DMNVItemLteBandAv *band;
+//
+//     qcdm_return_val_if_fail (buf != NULL, NULL);
+//
+//     if (!check_command (buf, len, DIAG_CMD_NV_READ, sizeof (DMCmdNVReadWrite), out_error)) {
+//         printf("check_command failed.\n");
+//         return NULL;
+//     }
+//
+//     if (!check_nv_cmd (rsp, DIAG_NV_LTE_BAND_AVAILABLE, out_error)) {
+//         printf("check_nv_cmd failed.\n");
+//         return NULL;
+//     }
+//
+//     band = (DMNVItemLteBandAv *) &rsp->data[0];
+//
+//     result = qcdm_result_new ();
+//     qcdm_result_add_u32 (result, QCDM_CMD_NV_GET_LTE_BAND_AVAILABLE_SET1, band->set1);
+//     qcdm_result_add_u8 (result, QCDM_CMD_NV_GET_LTE_BAND_AVAILABLE_SET2, band->set2);
+//
+//     return result;
+// }
+
+size_t
+qcdm_cmd_nv_set_lte_band_pref_new (char *buf, size_t len, uint64_t pref)
+{
+    /*
+     * \x4b\x13\x26\x00
+     * \x08\x00\x00\x00
+     * \x40\x00\x08\x00
+     * 0xba17
+     * 8 bytes of assigend item value
+     * Path to NV item
+     * CRC
+     */
+    char path[] = "/nv/item_files/modem/mmode/lte_bandpref";
+    unsigned long lenCmd = 4 + 4 + 4 + 2 + 8 + sizeof(path);
+    char cmdbuf[lenCmd + DIAG_TRAILER_LEN];
+
+    qcdm_return_val_if_fail (buf != NULL, 0);
+    qcdm_return_val_if_fail (len >= sizeof (cmdbuf), 0);
+
+    memset (cmdbuf, 0, sizeof (cmdbuf));
+    strncpy(cmdbuf, "\x4b\x13\x26\x00", 4);
+    strncpy(cmdbuf + 4, "\x08\x00\x00\x00", 4);
+    strncpy(cmdbuf + 8, "\x40\x00", 2);
+    strncpy(cmdbuf + 10, "\x08\x00", 2);
+    strncpy(cmdbuf + 12, "\xba\x17", 2);
+    strncpy(cmdbuf + 14, (char*)&(htole64(pref)), 8);
+    strncpy(cmdbuf + 22, path, sizeof(path));
+
+    return dm_encapsulate_buffer(cmdbuf, lenCmd, sizeof (cmdbuf), buf, len);
+}
+
+
+/**********************************************************************/
 
 size_t
 qcdm_cmd_nv_get_mode_pref_new (char *buf, size_t len, uint8_t profile)

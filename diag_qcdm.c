@@ -311,16 +311,15 @@ static int write_commands (int fd, BinaryBuffer *pbuf_write, uint32_t data_type)
 			 */
 			// LOGD("Before read\n");
 
-
-            // Haotian: don't read response immediately
 			int read_len = read(fd, buf_read, sizeof(buf_read));
 			if (read_len < 0) {
 				printf("write_commands read error: %s\n", strerror(errno));
 				return -1;
 			} else {
-				printf("Reading %d bytes of resp\n", read_len);
-				// LOGD("write_commands responses\n");
-				// print_hex(buf_read, read_len);
+                printf("Reading %d bytes of resp\n", read_len);
+                if (read_len < 256) {
+                    print_hex(buf_read, read_len);
+                }
                 printf("\n------------------------------------------------------\n");
 			}
 			// LOGD("After read\n");
@@ -532,7 +531,10 @@ void com_version_info (ComData *data) {
         printf("com_version_info reply_len: %lu\n", reply_len);
         /* Parse the response into a result structure */
         result = qcdm_cmd_version_info_result (buf, reply_len, NULL);
-        assert (result);
+        if (!result) {
+            qcdm_result_unref (result);
+            continue;
+        }
 
         str = NULL;
         qcdm_result_get_string (result, QCDM_CMD_VERSION_INFO_ITEM_COMP_DATE, &str);
@@ -555,11 +557,12 @@ void com_version_info (ComData *data) {
         printf ("%s: Model: %s\n", __func__, str);
 
         qcdm_result_unref (result);
+        break;
     }
 }
 
 void com_nv_cellular_mode(ComData *data) {
-    /* do nv related task */
+    /* read RAT mode: NV item 10 */
     ComData *d = data;
     int err = QCDM_SUCCESS;
     char buf[512];
@@ -597,14 +600,18 @@ void com_nv_cellular_mode(ComData *data) {
                 || err == -QCDM_ERROR_NV_ERROR_BAD_PARAMETER)
                 return;
             if(err != QCDM_SUCCESS) {
+                qcdm_result_unref (result);
                 printf("qcdm_cmd_nv_get_mode_pref_result failed.\n");
+                continue;
             }
         }
 
         err = qcdm_result_get_u8 (result, QCDM_CMD_NV_GET_MODE_PREF_ITEM_MODE_PREF, &pref);
         // g_assert_cmpint (err, ==, QCDM_SUCCESS);
         if(err != QCDM_SUCCESS) {
+            qcdm_result_unref (result);
             printf("qcdm_result_get_u8 failed.\n");
+            continue;
         }
 
         switch (pref) {
@@ -649,13 +656,13 @@ void com_nv_cellular_mode(ComData *data) {
             break;
         }
         printf("%s: Mode preference: 0x%02X (%s)\n", __func__, pref, msg);
-
         qcdm_result_unref (result);
+        break;
     }
 }
 
 void com_nv_read_lte_band(ComData *data) {
-    /* do nv related task */
+    /* read LTE_BC_Config */
     ComData *d = data;
     int err = QCDM_SUCCESS;
     char buf[512];
@@ -714,14 +721,19 @@ void com_nv_read_lte_band(ComData *data) {
         // g_assert_cmpint (err, ==, QCDM_SUCCESS);
         if(err != QCDM_SUCCESS) {
             printf("qcdm_result_get_u32 failed.\n");
+            print_hex((char*)&set1, sizeof(set1));
+            qcdm_result_unref (result);
+        } else {
+            printf("LTE_BC_Config (first 32 bits):\n");
+            print_hex((char*)&set1, sizeof(set1));
+            break;
         }
-        print_hex((char*)&set1, sizeof(set1));
 
-        qcdm_result_unref (result);
     }
 }
 
 void com_nv_write_lte_band(ComData *data) {
+    /* Write LTE_BC_Config */
     ComData *d = data;
     int err = QCDM_SUCCESS;
     char buf[512];
@@ -751,40 +763,69 @@ void com_nv_write_lte_band(ComData *data) {
         printf("Try to get response.\n");
         /* Get a response */
         reply_len = wait_reply (d, buf, sizeof (buf));
-
-        /* Parse the response into a result structure */
-        result = qcdm_cmd_nv_get_lte_band_available_result (buf, reply_len, &err);
-        if (!result) {
-            if (err == -QCDM_ERROR_NVCMD_FAILED) {
-                printf("QCDM_ERROR_NVCMD_FAILED\n");
-                return;
-            }
-            if (err == -QCDM_ERROR_RESPONSE_BAD_PARAMETER) {
-                printf("QCDM_ERROR_RESPONSE_BAD_PARAMETER\n");
-                return;
-            }
-            if (err == -QCDM_ERROR_NV_ERROR_INACTIVE) {
-                printf("QCDM_ERROR_NV_ERROR_INACTIVE: NV location is not active\n");
-                return;
-            }
-            if (err == -QCDM_ERROR_NV_ERROR_BAD_PARAMETER) {
-                printf("QCDM_ERROR_NV_ERROR_BAD_PARAMETER\n");
-                return;
-            }
-            if(err != QCDM_SUCCESS) {
-                printf("qcdm_cmd_nv_get_mode_pref_result failed.\n");
-            }
-        }
-
-        err = qcdm_result_get_u32 (result, QCDM_CMD_NV_GET_LTE_BAND_AVAILABLE_SET1, &set1);
-        // g_assert_cmpint (err, ==, QCDM_SUCCESS);
-        if(err != QCDM_SUCCESS) {
-            printf("qcdm_result_get_u32 failed.\n");
-        }
-        print_hex((char*)&set1, sizeof(set1));
-
-        qcdm_result_unref (result);
         break;
+    }
+}
+
+void com_nv_read_lte_band_pref(ComData *data) {
+    /* read LTE_Band_Pref */
+    ComData *d = data;
+    int err = QCDM_SUCCESS;
+    char buf[512];
+    const char *msg;
+    int len;
+    QcdmResult *result;
+    unsigned long reply_len;
+
+    len = qcdm_cmd_nv_get_lte_band_pref_new (buf, sizeof (buf));
+    assert (len > 0);
+
+    /* Send the command */
+    printf("com_nv_read_lte_band_pref: sending command...\n");
+    print_hex(buf, len);
+    BinaryBuffer buff;
+    buff.p = buf;
+    buff.len = len;
+    printf("write to fd:%d\n", fd);
+    write_commands(d->fd, &buff, CALLBACK_DATA_TYPE);
+    printf("com_nv_read_lte_band_pref: send_command done.\n");
+
+    while (1+1 == 2) {
+        usleep(1000000);
+        printf("Try to get response.\n");
+        /* Get a response */
+        reply_len = wait_reply (d, buf, sizeof (buf));
+    }
+}
+
+void com_nv_write_lte_band_pref(ComData *data, uint64_t pref) {
+    /* Write LTE_Band_Pref */
+    ComData *d = data;
+    int err = QCDM_SUCCESS;
+    char buf[512];
+    const char *msg;
+    int len;
+    QcdmResult *result;
+    unsigned long reply_len;
+
+    len = qcdm_cmd_nv_set_lte_band_pref_new (buf, sizeof (buf), pref);
+    assert (len > 0);
+
+    /* Send the command */
+    printf("com_nv_write_lte_band_pref: sending command...\n");
+    print_hex(buf, len);
+    BinaryBuffer buff;
+    buff.p = buf;
+    buff.len = len;
+    printf("write to fd:%d\n", fd);
+    write_commands(d->fd, &buff, CALLBACK_DATA_TYPE);
+    printf("com_nv_write_lte_band_pref: send_command done.\n");
+
+    while (1+1 == 2) {
+        usleep(1000000);
+        printf("Try to get response.\n");
+        /* Get a response */
+        reply_len = wait_reply (d, buf, sizeof (buf));
     }
 }
 
@@ -905,9 +946,11 @@ int main (int argc, char **argv) {
     ComData *data = malloc(sizeof(ComData));
     data->fd = fd;
     // com_version_info(data);
-    com_nv_cellular_mode(data);
+    // com_nv_cellular_mode(data);
     // com_nv_write_lte_band(data);
     // com_nv_read_lte_band(data);
+    com_nv_read_lte_band_pref(data);
+    // com_nv_write_lte_band_pref(data, 8);
 
     free(data);
     close(fd);

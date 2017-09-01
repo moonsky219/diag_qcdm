@@ -310,6 +310,24 @@ size_t qcdm_cmd_nv_set_lte_band_available_new(
 
 /**********************************************************************/
 
+/* LTE Band Pref */
+
+size_t qcdm_cmd_nv_get_lte_band_pref_new(
+        char *buf,
+        size_t len);
+
+// QcdmResult *qcdm_cmd_nv_get_lte_band_pref_result(
+//         const char *buf,
+//         size_t len,
+//         int *out_error);
+
+size_t qcdm_cmd_nv_set_lte_band_pref_new(
+        char *buf,
+        size_t len,
+        uint64_t pref);
+
+/**********************************************************************/
+
 /* Values for QCDM_CMD_NV_GET_MODE_PREF_ITEM_MODE_PREF */
 enum {
     QCDM_CMD_NV_MODE_PREF_ITEM_MODE_PREF_DIGITAL         = 0x00,
