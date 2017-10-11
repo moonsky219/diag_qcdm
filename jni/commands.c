@@ -1021,33 +1021,39 @@ qcdm_cmd_nv_get_lte_band_pref_new (char *buf, size_t len)
     return dm_encapsulate_buffer(cmdbuf, lenCmd, sizeof (cmdbuf), buf, len);
 }
 
-// QcdmResult *
-// qcdm_cmd_nv_get_lte_band_pref_result (const char *buf, size_t len, int *out_error)
-// {
-//     QcdmResult *result = NULL;
-//     DMCmdNVReadWrite *rsp = (DMCmdNVReadWrite *) buf;
-//     DMNVItemLteBandAv *band;
-//
-//     qcdm_return_val_if_fail (buf != NULL, NULL);
-//
-//     if (!check_command (buf, len, DIAG_CMD_NV_READ, sizeof (DMCmdNVReadWrite), out_error)) {
-//         printf("check_command failed.\n");
-//         return NULL;
-//     }
-//
-//     if (!check_nv_cmd (rsp, DIAG_NV_LTE_BAND_AVAILABLE, out_error)) {
-//         printf("check_nv_cmd failed.\n");
-//         return NULL;
-//     }
-//
-//     band = (DMNVItemLteBandAv *) &rsp->data[0];
-//
-//     result = qcdm_result_new ();
-//     qcdm_result_add_u32 (result, QCDM_CMD_NV_GET_LTE_BAND_AVAILABLE_SET1, band->set1);
-//     qcdm_result_add_u8 (result, QCDM_CMD_NV_GET_LTE_BAND_AVAILABLE_SET2, band->set2);
-//
-//     return result;
-// }
+QcdmResult *
+qcdm_cmd_nv_get_lte_band_pref_result (const char *buf, size_t len, int *out_error)
+{
+    QcdmResult *result = NULL;
+    char ltebandpref[40];
+    memset(ltebandpref, 0, sizeof(ltebandpref));
+
+
+    qcdm_return_val_if_fail (buf != NULL, NULL);
+
+    if (len != 4 + 4 + 4 + 2 + 8)
+        return NULL;
+
+    if (strncmp(buf, "\x4b\x13\x27\x00", 4) != 0)
+        return NULL;
+    if (strncmp(buf + 4, "\x08\x00\x00\x00", 4) != 0)
+        return NULL;
+    if (strncmp(buf + 8, "\x00\x00\x00\x00", 4) != 0)
+        return NULL;
+    if (strncmp(buf + 12, "\xb9\x17", 2) != 0)
+        return NULL;
+
+    snprintf(ltebandpref,
+            sizeof(ltebandpref) - 1,
+            "%llu", *(uint64_t*)(buf + 14));
+
+    result = qcdm_result_new ();
+    qcdm_result_add_string (result,
+            QCDM_CMD_NV_GET_LTE_BAND_PREFERENCE,
+            ltebandpref);
+
+    return result;
+}
 
 size_t
 qcdm_cmd_nv_set_lte_band_pref_new (char *buf, size_t len, uint64_t pref)

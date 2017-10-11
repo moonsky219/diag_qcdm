@@ -68,7 +68,7 @@ enum remote_procs {
 
 /* IOCTL commands for diagnostic port
  * Reference: https://android.googlesource.com/kernel/msm.git/+/android-6.0.0_r0.9/include/linux/diagchar.h
- */ 
+ */
 #define DIAG_IOCTL_SWITCH_LOGGING	7
 #define DIAG_IOCTL_LSM_DEINIT		9
 #define DIAG_IOCTL_DCI_REG		23
@@ -294,7 +294,9 @@ static int write_commands (int fd, BinaryBuffer *pbuf_write, uint32_t data_type)
 			// memcpy(send_buf + 4, p + i, len);
 			memcpy(send_buf + offset, p + i, len);
 			// LOGD("Writing %d bytes of data\n", len + 4);
+
 			print_hex(send_buf, len + offset);
+
 			// fflush(stdout);
 			// int ret = write(fd, (const void *) send_buf, len + 4);
             errno = 0;
@@ -468,7 +470,8 @@ unsigned long wait_reply (ComData *d, char *buf, unsigned long len) {
         if ((*((int *)buf_read) == USER_SPACE_DATA_TYPE) &&
                 *((int *)(buf_read + 4)) == MSG_MASKS_TYPE) {
             int num_data = *((int *)(buf_read + 8));
-            printf("wait_reply: find bytes beginning with USER_SPACE_DATA_TYPE + MSG_MASKS_TYPE, num_data=%d\n",num_data);
+            printf("wait_reply: find bytes beginning with USER_SPACE_DATA_TYPE\
+                    + MSG_MASKS_TYPE, num_data = %d\n",num_data);
 
             qcdmbool more = FALSE;
             qcdmbool success;
@@ -767,7 +770,7 @@ void com_nv_write_lte_band(ComData *data) {
     }
 }
 
-void com_nv_read_lte_band_pref(ComData *data) {
+int com_nv_read_lte_band_pref(ComData *data) {
     /* read LTE_Band_Pref */
     ComData *d = data;
     int err = QCDM_SUCCESS;
@@ -776,6 +779,8 @@ void com_nv_read_lte_band_pref(ComData *data) {
     int len;
     QcdmResult *result;
     unsigned long reply_len;
+    const char* ltebandpref;
+    int count = 0;
 
     len = qcdm_cmd_nv_get_lte_band_pref_new (buf, sizeof (buf));
     assert (len > 0);
@@ -786,19 +791,40 @@ void com_nv_read_lte_band_pref(ComData *data) {
     BinaryBuffer buff;
     buff.p = buf;
     buff.len = len;
-    printf("write to fd:%d\n", fd);
-    write_commands(d->fd, &buff, CALLBACK_DATA_TYPE);
-    printf("com_nv_read_lte_band_pref: send_command done.\n");
-
-    while (1+1 == 2) {
-        usleep(1000000);
-        printf("Try to get response.\n");
-        /* Get a response */
-        reply_len = wait_reply (d, buf, sizeof (buf));
+    if (write_commands(d->fd, &buff, CALLBACK_DATA_TYPE) != 0) {
+        printf("com_nv_read_lte_band_pref: failed to send command.\n");
+        return -1;
     }
+    printf("com_nv_read_lte_band_pref: send command successfully.\n");
+    /* Try to get response for maximum 5 times */
+    while (count < 5) {
+        reply_len = wait_reply (d, buf, sizeof (buf));
+        if (reply_len > 0 && strncmp(buf, "\x4b\x13\x27\x00", 4) == 0) {
+            break;
+        }
+        count++;
+    }
+    if (count == 5) {
+        printf("com_nv_read_lte_band_pref: No response.\n");
+		fflush(stdout);
+        return -1;
+    }
+    /* Parse the response into a result structure */
+    result = qcdm_cmd_nv_get_lte_band_pref_result(buf, reply_len, &err);
+    if (!result) {
+        return -1;
+    }
+    err = qcdm_result_get_string(result,
+            QCDM_CMD_NV_GET_LTE_BAND_PREFERENCE,
+            &ltebandpref);
+    if (err != QCDM_SUCCESS) {
+        return -1;
+    }
+    printf("com_nv_read_lte_band_pref: %s.\n", ltebandpref);
+    return 0;
 }
 
-void com_nv_write_lte_band_pref(ComData *data, uint64_t pref) {
+int com_nv_write_lte_band_pref(ComData *data, uint64_t pref) {
     /* Write LTE_Band_Pref */
     ComData *d = data;
     int err = QCDM_SUCCESS;
@@ -813,7 +839,7 @@ void com_nv_write_lte_band_pref(ComData *data, uint64_t pref) {
 
     /* Send the command */
     printf("com_nv_write_lte_band_pref: sending command...\n");
-    print_hex(buf, len);
+    // print_hex(buf, len);
     BinaryBuffer buff;
     buff.p = buf;
     buff.len = len;
@@ -821,12 +847,7 @@ void com_nv_write_lte_band_pref(ComData *data, uint64_t pref) {
     write_commands(d->fd, &buff, CALLBACK_DATA_TYPE);
     printf("com_nv_write_lte_band_pref: send_command done.\n");
 
-    while (1+1 == 2) {
-        usleep(1000000);
-        printf("Try to get response.\n");
-        /* Get a response */
-        reply_len = wait_reply (d, buf, sizeof (buf));
-    }
+    return 0;
 }
 
 
@@ -945,7 +966,23 @@ int main (int argc, char **argv) {
 
     ComData *data = malloc(sizeof(ComData));
     data->fd = fd;
-    com_version_info(data);
+    int response = -1;
+
+    if (argc == 3 && strcmp("get", argv[1]) == 0) {
+        // Usage: diag_qcdm get key
+        if (strcmp("lte_band_pref", argv[2]) == 0) {
+            response = com_nv_read_lte_band_pref(data);
+        }
+    } else if (argc == 4 && strcmp("set", argv[1]) == 0) {
+        // Usage: diag_qcdm set key value
+        if (strcmp("lte_band_pref", argv[2]) == 0) {
+            response = com_nv_write_lte_band_pref(data, (uint64_t)atol(argv[3]));
+        }
+    }
+    else {
+        printf("Usage: diag_qcdm set key value or diag_qcdm get key\n");
+    }
+    // com_version_info(data);
     // com_nv_cellular_mode(data);
     // com_nv_write_lte_band(data);
     // com_nv_read_lte_band(data);

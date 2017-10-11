@@ -312,14 +312,16 @@ size_t qcdm_cmd_nv_set_lte_band_available_new(
 
 /* LTE Band Pref */
 
+#define QCDM_CMD_NV_GET_LTE_BAND_PREFERENCE   "ltebandpref"
+
 size_t qcdm_cmd_nv_get_lte_band_pref_new(
         char *buf,
         size_t len);
 
-// QcdmResult *qcdm_cmd_nv_get_lte_band_pref_result(
-//         const char *buf,
-//         size_t len,
-//         int *out_error);
+QcdmResult *qcdm_cmd_nv_get_lte_band_pref_result(
+        const char *buf,
+        size_t len,
+        int *out_error);
 
 size_t qcdm_cmd_nv_set_lte_band_pref_new(
         char *buf,
