@@ -945,12 +945,12 @@ int main (int argc, char **argv) {
 
     ComData *data = malloc(sizeof(ComData));
     data->fd = fd;
-    // com_version_info(data);
+    com_version_info(data);
     // com_nv_cellular_mode(data);
     // com_nv_write_lte_band(data);
     // com_nv_read_lte_band(data);
-    com_nv_read_lte_band_pref(data);
-    // com_nv_write_lte_band_pref(data, 8);
+    // com_nv_read_lte_band_pref(data);
+    // com_nv_write_lte_band_pref(data, 2);
 
     free(data);
     close(fd);

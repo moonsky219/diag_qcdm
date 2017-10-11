@@ -1074,7 +1074,7 @@ qcdm_cmd_nv_set_lte_band_pref_new (char *buf, size_t len, uint64_t pref)
     strncpy(cmdbuf + 8, "\x40\x00", 2);
     strncpy(cmdbuf + 10, "\x08\x00", 2);
     strncpy(cmdbuf + 12, "\xba\x17", 2);
-    strncpy(cmdbuf + 14, (char*)&(htole64(pref)), 8);
+    *(uint64_t*)(cmdbuf + 14) = htole64(pref);
     strncpy(cmdbuf + 22, path, sizeof(path));
 
     return dm_encapsulate_buffer(cmdbuf, lenCmd, sizeof (cmdbuf), buf, len);
