@@ -216,8 +216,7 @@ int fd; //file descriptor to /dev/diag
 
 
 // Handle SIGPIPE ERROR
-void sigpipe_handler(int signo)
-{
+void sigpipe_handler(int signo) {
   if (signo == SIGPIPE){
   	  // LOGD("received SIGPIPE. Exit elegantly...\n");
 
@@ -242,7 +241,8 @@ void sigpipe_handler(int signo)
   }
 }
 
-static void print_hex (const char *buf, int len) {
+static void print_hex (const char *buf, int len)
+{
 	int i = 0;
 	for (i = 0; i < len; i++) {
 		printf("%02x ", buf[i]);
@@ -255,7 +255,8 @@ static void print_hex (const char *buf, int len) {
 
 
 // Write commands to /dev/diag device.
-static int write_commands (int fd, BinaryBuffer *pbuf_write, uint32_t data_type) {
+static int write_commands(int fd, BinaryBuffer *pbuf_write, uint32_t data_type)
+{
     // data_type: indicate whether CALLBACK_DATA_TYPE or USER_SPACE_DATA_TYPE
 	size_t i = 0;
 	char *p = pbuf_write->p;
@@ -276,185 +277,68 @@ static int write_commands (int fd, BinaryBuffer *pbuf_write, uint32_t data_type)
 	printf("write_commands: offset=%d remote_dev=%d\n",offset,remote_dev);
 	*((int *)send_buf) = htole32(data_type);
 	if(remote_dev){
-		/*
+        /*
 	 	 * MDM device: should let diag driver know it
 	 	 * Reference: diag_get_remote and diagchar_write
 	 	 * in https://android.googlesource.com/kernel/msm.git/+/android-6.0.0_r0.9/drivers/char/diag/diagchar_core.c
 	 	 */
-		*((int *)send_buf+1) =  - MDM;
+        *((int *)send_buf+1) =  - MDM;
 	}
 
 	while (i < pbuf_write->len) {
-		size_t len = 0;
-		while (i + len < pbuf_write->len && p[i + len] != 0x7e) len++;
-		if (i + len >= pbuf_write->len)
-			break;
-		len++;
-		if (len >= 3) {
-			// memcpy(send_buf + 4, p + i, len);
-			memcpy(send_buf + offset, p + i, len);
-			// LOGD("Writing %d bytes of data\n", len + 4);
+        size_t len = 0;
+        while (i + len < pbuf_write->len && p[i + len] != 0x7e) len++;
+        if (i + len >= pbuf_write->len)
+            break;
+        len++;
+        if (len >= 3) {
+            // memcpy(send_buf + 4, p + i, len);
+            memcpy(send_buf + offset, p + i, len);
+            // LOGD("Writing %d bytes of data\n", len + 4);
 
-			print_hex(send_buf, len + offset);
-
-			// fflush(stdout);
-			// int ret = write(fd, (const void *) send_buf, len + 4);
+            print_hex(send_buf, len + offset);
+            // fflush(stdout);
+            // // int ret = write(fd, (const void *) send_buf, len + 4);
             errno = 0;
             int ret = write(fd, (const void *) send_buf, len + offset);
-			printf("write_commands: ret = %d\n",ret);
-			if (ret < 0) {
-				printf("write_commands error (len=%d, offset=%d, errno=%d): %s\n", len, offset, errno, strerror(errno));
-			}
-			/*
-			 * Read responses after writting each command.
-			 * NOTE: This step MUST EXIST. Without it, some phones cannot collect logs for two reasons:
-			 *  (1) Ensure every config commands succeeds (otherwise read() will be blocked)
-			 *  (2) Clean up the buffer, thus avoiding pollution of later real cellular logs
-			 */
-			// LOGD("Before read\n");
+            printf("write_commands: ret = %d\n",ret);
+            if (ret < 0) {
+                printf("write_commands error (len=%d, offset=%d, errno=%d): %s\n", len, offset, errno, strerror(errno));
+            }
+            /*
+             * Read responses after writting each command.
+             * NOTE: This step MUST EXIST. Without it, some phones cannot collect logs for two reasons:
+             *  (1) Ensure every config commands succeeds (otherwise read() will be blocked)
+             *  (2) Clean up the buffer, thus avoiding pollution of later real cellular logs
+             */
+            // LOGD("Before read\n");
 
-			int read_len = read(fd, buf_read, sizeof(buf_read));
-			if (read_len < 0) {
-				printf("write_commands read error: %s\n", strerror(errno));
-				return -1;
-			} else {
+            int read_len = read(fd, buf_read, sizeof(buf_read));
+            if (read_len < 0) {
+                printf("write_commands read error: %s\n", strerror(errno));
+                return -1;
+            } else {
                 printf("Reading %d bytes of resp\n", read_len);
                 if (read_len < 256) {
                     print_hex(buf_read, read_len);
                 }
                 printf("\n------------------------------------------------------\n");
-			}
-			// LOGD("After read\n");
-		}
-		i += len;
+            }
+            // LOGD("After read\n");
+        }
+        i += len;
 	}
-
-	return 0;
-}
-
-// Manage the output of logs.
-struct LogManagerState {
-	const char *dir;
-	int log_id;		// ID of the current log.
-	FILE *log_fp;	// Point to the current log.
-	size_t log_size;	// Number of bytes in the current log.
-	size_t log_cut_size;	// Max number of bytes for each log.
-};
-
-static void
-manager_init_state (struct LogManagerState *pstate, const char *dir, size_t log_cut_size) {
-	pstate->dir = dir;
-	pstate->log_id = -1;
-	pstate->log_fp = NULL;
-	pstate->log_size = -1;
-	pstate->log_cut_size = log_cut_size;
-}
-
-static void
-manager_get_log_name (struct LogManagerState *pstate, char *out_buf, size_t out_buf_size) {
-	assert(out_buf_size > 0);
-	size_t dir_len = strlen(pstate->dir);
-	// Remove trailing slashes
-	while (dir_len > 0 && pstate->dir[dir_len - 1] == '/') {
-		dir_len--;
-	}
-	assert(dir_len > 0);
-	assert(out_buf_size > dir_len + 100);
-	strncpy(out_buf, pstate->dir, dir_len);
-	snprintf(out_buf + dir_len, out_buf_size - dir_len - 1, "/%d.mi2log", pstate->log_id);
-	out_buf[out_buf_size - 1] = '\0';
-	return;
-}
-
-static int
-manager_start_new_log (struct LogManagerState *pstate, int fifo_fd) {
-	static char filename[1024] = {};
-	int ret;
-	if (pstate->log_fp != NULL) {	// end the last log
-		assert(pstate->log_id >= 0);
-		manager_get_log_name(pstate, filename, sizeof(filename));
-		short fifo_msg_type = FIFO_MSG_TYPE_END_LOG_FILE;
-		short msg_len = strlen(filename);
-
-		// Wirte msg type to pipe
-		ret = write(fifo_fd, &fifo_msg_type, sizeof(short));
-		if(ret<0){
-			return -1;
-		}
-
-		// Write len of filename
-		ret = write(fifo_fd, &msg_len, sizeof(short));
-		if(ret<0){
-			return -1;
-		}
-
-		// Write filename of ended log to pipe
-		ret = write(fifo_fd, filename, msg_len);
-		if(ret<0){
-			return -1;
-		}
-
-		fclose(pstate->log_fp);
-		pstate->log_fp = NULL;
-	}
-	pstate->log_id = (pstate->log_id < 0? 0: pstate->log_id + 1);
-	manager_get_log_name(pstate, filename, sizeof(filename));
-	pstate->log_fp = fopen(filename, "wb");
-	LOGD("creating %s ...\n", filename);
-	if (pstate->log_fp != NULL) {
-		// printf("success\n");
-		pstate->log_size = 0;
-		short fifo_msg_type = FIFO_MSG_TYPE_START_LOG_FILE;
-		short msg_len = strlen(filename);
-		// Wirte msg type to pipe
-		ret = write(fifo_fd, &fifo_msg_type, sizeof(short));
-		if(ret<0){
-			return -1;
-		}
-
-		// Write len of filename
-		ret = write(fifo_fd, &msg_len, sizeof(short));
-		if(ret<0){
-			return -1;
-		}
-
-		// Write filename of ended log to pipe
-		ret = write(fifo_fd, filename, msg_len);
-		if(ret<0){
-			return -1;
-		}
-        // char tmp[4096];
-        // sprintf(tmp,"su -c chmod 644 %s\n",filename);
-        // system(tmp);
-        char tmp[4096];
-        sprintf(tmp,"chmod 777 %s\n",filename);
-        system(tmp);
-
-	} else {
-		return -1;
-	}
-	return 0;
-}
-
-// When appending new data to logs, call this function to maintain states.
-// If the size of the current log exceeds log_cut_size, a new log file is created.
-static int
-manager_append_log (struct LogManagerState *pstate, int fifo_fd, size_t msg_len) {
-
-	if (pstate->log_size + msg_len > pstate->log_cut_size) {
-		int ret = manager_start_new_log(pstate, fifo_fd);
-		if (ret < 0) {
-			return -1;
-		}
-	}
-	pstate->log_size += msg_len;
-	return 0;
+    return 0;
 }
 
 unsigned long wait_reply (ComData *d, char *buf, unsigned long len) {
     int result;
     ssize_t bytes_read;
     size_t decap_len = 0;
+
+    // make /dev/diag non-blocking
+    int flags = fcntl(d->fd, F_GETFL, 0);
+    fcntl(d->fd, F_SETFL, flags | O_NONBLOCK);
 
     errno = 0;
     // bytes_read = read (d->fd, &buf_read[total], 1);
@@ -564,7 +448,7 @@ void com_version_info (ComData *data) {
     }
 }
 
-void com_nv_cellular_mode(ComData *data) {
+int com_nv_read_cellular_mode(ComData *data) {
     /* read RAT mode: NV item 10 */
     ComData *d = data;
     int err = QCDM_SUCCESS;
@@ -574,46 +458,38 @@ void com_nv_cellular_mode(ComData *data) {
     int len;
     QcdmResult *result;
     unsigned long reply_len;
+    int count = 0;
 
     len = qcdm_cmd_nv_get_mode_pref_new (buf, sizeof (buf), 0);
     assert (len > 0);
 
     /* Send the command */
-    printf("com_nv_task: sending command...\n");
+    printf("%s: sending command...\n", __func__);
     print_hex(buf, len);
     BinaryBuffer buff;
     buff.p = buf;
     buff.len = len;
     printf("write to fd:%d\n", fd);
     write_commands(d->fd, &buff, CALLBACK_DATA_TYPE);
-    printf("com_nv_task: send_command done.\n");
+    printf("%s: send_command done.\n", __func__);
 
-    while (1+1 == 2) {
-        usleep(1000000);
-        printf("Try to get response.\n");
+    while (count < 5) {
+        count++;
+        printf("%s: Try to get response.\n", __func__);
         /* Get a response */
         reply_len = wait_reply (d, buf, sizeof (buf));
 
         /* Parse the response into a result structure */
         result = qcdm_cmd_nv_get_mode_pref_result (buf, reply_len, &err);
         if (!result) {
-            if (   err == -QCDM_ERROR_NVCMD_FAILED
-                || err == -QCDM_ERROR_RESPONSE_BAD_PARAMETER
-                || err == -QCDM_ERROR_NV_ERROR_INACTIVE
-                || err == -QCDM_ERROR_NV_ERROR_BAD_PARAMETER)
-                return;
-            if(err != QCDM_SUCCESS) {
-                qcdm_result_unref (result);
-                printf("qcdm_cmd_nv_get_mode_pref_result failed.\n");
-                continue;
-            }
+            continue;
         }
 
         err = qcdm_result_get_u8 (result, QCDM_CMD_NV_GET_MODE_PREF_ITEM_MODE_PREF, &pref);
         // g_assert_cmpint (err, ==, QCDM_SUCCESS);
         if(err != QCDM_SUCCESS) {
             qcdm_result_unref (result);
-            printf("qcdm_result_get_u8 failed.\n");
+            printf("%s: qcdm_result_get_u8 failed.\n", __func__);
             continue;
         }
 
@@ -658,11 +534,40 @@ void com_nv_cellular_mode(ComData *data) {
             msg = "unknown";
             break;
         }
-        printf("%s: Mode preference: 0x%02X (%s)\n", __func__, pref, msg);
+        printf("Mode preference: 0x%02X (%s)\n", pref, msg);
         qcdm_result_unref (result);
-        break;
+        return 0;
     }
+    return -1;
 }
+
+int com_nv_write_cellular_mode(ComData *data, uint8_t mode) {
+    /* write RAT mode: NV item 10 */
+    ComData *d = data;
+    int err = QCDM_SUCCESS;
+    char buf[512];
+    uint8_t pref;
+    const char *msg;
+    int len;
+    QcdmResult *result;
+    unsigned long reply_len;
+    int count = 0;
+
+    len = qcdm_cmd_nv_set_mode_pref_new (buf, sizeof (buf), 0, mode);
+    assert (len > 0);
+
+    /* Send the command */
+    printf("%s: sending command...\n", __func__);
+    print_hex(buf, len);
+    BinaryBuffer buff;
+    buff.p = buf;
+    buff.len = len;
+    write_commands(d->fd, &buff, CALLBACK_DATA_TYPE);
+    printf("%s: send_command done.\n", __func__);
+
+    return 0;
+}
+
 
 void com_nv_read_lte_band(ComData *data) {
     /* read LTE_BC_Config */
@@ -786,16 +691,16 @@ int com_nv_read_lte_band_pref(ComData *data) {
     assert (len > 0);
 
     /* Send the command */
-    printf("com_nv_read_lte_band_pref: sending command...\n");
+    printf("%s: sending command...\n", __func__);
     print_hex(buf, len);
     BinaryBuffer buff;
     buff.p = buf;
     buff.len = len;
     if (write_commands(d->fd, &buff, CALLBACK_DATA_TYPE) != 0) {
-        printf("com_nv_read_lte_band_pref: failed to send command.\n");
+        printf("%s: failed to send command.\n", __func__);
         return -1;
     }
-    printf("com_nv_read_lte_band_pref: send command successfully.\n");
+    printf("%s: send command successfully.\n", __func__);
     /* Try to get response for maximum 5 times */
     while (count < 5) {
         reply_len = wait_reply (d, buf, sizeof (buf));
@@ -805,7 +710,7 @@ int com_nv_read_lte_band_pref(ComData *data) {
         count++;
     }
     if (count == 5) {
-        printf("com_nv_read_lte_band_pref: No response.\n");
+        printf("LTE Band Preference: No response.\n");
 		fflush(stdout);
         return -1;
     }
@@ -820,7 +725,7 @@ int com_nv_read_lte_band_pref(ComData *data) {
     if (err != QCDM_SUCCESS) {
         return -1;
     }
-    printf("com_nv_read_lte_band_pref: %s.\n", ltebandpref);
+    printf("LTE Band Preference: %s.\n", ltebandpref);
     return 0;
 }
 
@@ -838,14 +743,14 @@ int com_nv_write_lte_band_pref(ComData *data, uint64_t pref) {
     assert (len > 0);
 
     /* Send the command */
-    printf("com_nv_write_lte_band_pref: sending command...\n");
+    printf("%s: sending command...\n", __func__);
     // print_hex(buf, len);
     BinaryBuffer buff;
     buff.p = buf;
     buff.len = len;
     printf("write to fd:%d\n", fd);
     write_commands(d->fd, &buff, CALLBACK_DATA_TYPE);
-    printf("com_nv_write_lte_band_pref: send_command done.\n");
+    printf("%s: send_command done.\n", __func__);
 
     return 0;
 }
@@ -972,18 +877,28 @@ int main (int argc, char **argv) {
         // Usage: diag_qcdm get key
         if (strcmp("lte_band_pref", argv[2]) == 0) {
             response = com_nv_read_lte_band_pref(data);
+        } else if (strcmp("mode_pref", argv[2]) == 0) {
+            response = com_nv_read_cellular_mode(data);
+        }
+        else {
+            printf("Key %s is not available.\n", argv[2]);
         }
     } else if (argc == 4 && strcmp("set", argv[1]) == 0) {
         // Usage: diag_qcdm set key value
         if (strcmp("lte_band_pref", argv[2]) == 0) {
             response = com_nv_write_lte_band_pref(data, (uint64_t)atol(argv[3]));
         }
-    }
-    else {
+        if (strcmp("mode_pref", argv[2]) == 0) {
+            response = com_nv_write_cellular_mode(data, (uint8_t)atoi(argv[3]));
+        }
+        else {
+            printf("Key %s is not available.\n", argv[2]);
+        }
+    } else {
         printf("Usage: diag_qcdm set key value or diag_qcdm get key\n");
     }
     // com_version_info(data);
-    // com_nv_cellular_mode(data);
+    // com_nv_read_rat_mode(data);
     // com_nv_write_lte_band(data);
     // com_nv_read_lte_band(data);
     // com_nv_read_lte_band_pref(data);
